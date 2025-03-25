@@ -10,7 +10,7 @@ import torch
 from transformers import AutoTokenizer, AutoModel, StoppingCriteria, StoppingCriteriaList, AutoModelForCausalLM
 import logging
 os.environ["MKL_THREADING_LAYER"] = "GNU"
-os.environ["CUDA_VISIBLE_DEVICES"] = "2"
+os.environ["CUDA_VISIBLE_DEVICES"] = "3"
 from DeCK import DECK
 
 class LLamaQaStoppingCriteria(StoppingCriteria):
@@ -45,18 +45,15 @@ def set_stop_words(tokenizer, stop):
     stopping_criteria.append(LLamaQaStoppingCriteria(list_stop_word_ids))
     return stopping_criteria
             
-def call_deck(model, base_prompts, context_prompts, stop, params_dict):
-    sequences = model.generate(base_prompts, context_prompts, **params_dict)
-
+def call_llama(model, tokenizer, prompt, stopping_criteria, stop):
+    input_ids = tokenizer(prompt, return_tensors="pt").input_ids.to("cuda")
+    sequences = model.generate(input_ids.cuda(), stopping_criteria = stopping_criteria, max_new_tokens = 512)[0, input_ids.shape[-1]:]
+    decoded = tokenizer.decode(sequences, skip_special_tokens=True)
     for stop_word in stop:
-        # Check if the stop_word exists in the sequences
-        if stop_word in sequences:
-            # Find the position of the stop word and slice the sequences before it
-            stop_index = sequences.find(stop_word)
-            sequences = sequences[:stop_index]
-            break  # Stop after removing the first match
-
-    output_str = sequences.strip()
+        length_to_remove = len(stop_word)
+        if decoded[-length_to_remove:] == stop_word:
+            decoded = decoded[:-length_to_remove]
+    output_str = decoded.strip()
     return output_str
 
 def call_deck(model, base_prompts, context_prompts, stop, params_dict):
@@ -72,6 +69,11 @@ def call_deck(model, base_prompts, context_prompts, stop, params_dict):
 
     output_str = sequences.strip()
     return output_str
+
+negation_words = [
+    "no", "not", "never", "none", "cannot", "nobody", "nothing", "nowhere", 
+    "neither", "nor", "without", "hardly"
+]
 
 def normalize_answer(s):
     """Lower text and remove punctuation, articles and extra whitespace."""
@@ -97,6 +99,9 @@ def recall_score(prediction, ground_truth):
 def get_score(preds, golds):
     em, recall = 0, 0
     for pred, gold in zip(preds, golds):
+        # contains_negation = any(word in pred.split() for word in negation_words)
+        # if contains_negation: 
+        #     continue
         if isinstance(gold, list):
             _em, _recall = 0, 0
             for g in gold:
@@ -142,11 +147,7 @@ def eval(pred_answers, orig_answers, gold_answers):
     _, po = get_score(pred_answers, orig_answers)
     mr = po / (ps + po + 1e-10) * 100
     print('ps {}, po {}, mr {}, em {}.'.format(ps, po, mr, em))
-
-def eval_case(pred_answers, orig_answers, gold_answers):
-    em, ps = get_score(pred_answers, gold_answers)
-    _, po = get_score(pred_answers, orig_answers)
-    return ps, po
+    return po > 0
     
 def create_log_path(log_path):
     if not os.path.exists(log_path):
@@ -159,80 +160,69 @@ def create_log_path(log_path):
 def main():
     
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model_name", default="Models/Llama-3-8B-Instruct", type=str)
-    parser.add_argument("--orig_path", default="work7/faith/datasets/nq/orig_dev_filtered.json", type=str)
-    parser.add_argument("--counter_path", default="work7/faith/datasets/nq/conflict_dev_filtered.json", type=str)
+    parser.add_argument("--model_name", default="Models/Qwen2.5-7B-Instruct", type=str)
+    parser.add_argument("--data_path", default="work7/faith/ConFiQA-QA.json", type=str)
     parser.add_argument("--engine", default="text-davinci-003", type=str)
     parser.add_argument("--schema", default="opin", type=str, help="Choose from the following prompting templates: base, attr, instr, opin, instr+opin.")
     parser.add_argument("--demo_mode", default="none", help="Choose from the following demonstrations: none, original, counter.")
     parser.add_argument("--num_demos", default=16, type=int)
-    parser.add_argument("--log_path", default='work7/case_study/qwen_0.0.json', type=str)
+    parser.add_argument("--log_path", default='', type=str)
     parser.add_argument("--num-gpus", type=str, default="1")
     parser.add_argument("--max_gpu_memory", type=int, default=27)
     parser.add_argument("--device", type=str, choices=["cuda", "cpu"], default="cuda")
     parser.add_argument('--mode', type=str, default='baseline', 
                     help='deck, baseline')
     args = parser.parse_args()
-    with open(args.orig_path, 'r') as fh:
-        orig_examples = json.load(fh)
-    with open(args.counter_path, 'r') as fh:
-        counter_examples = json.load(fh)
-    print('Loaded {} instances.'.format(len(counter_examples)))
-
-    orig_examples = orig_examples[:500]
-    counter_examples = counter_examples[:500]
+    
+    with open(args.data_path, 'r') as fh:
+        data = json.load(fh)
 
     model_name = args.model_name
     num_gpus = args.num_gpus
     device = args.device
     model = DECK(model_name, device, num_gpus, max_gpu_memory=27)
-    stop = []
+    stop = ['Q:']
     # model.set_stop_words(stop)
 
     params_dict = {
             "repetition_penalty": 1.0,
             "temperature": 1.0,
             "top_p": 1.0,
-            "top_k": 100,
+            "top_k": 1,
             "max_new_tokens": 64,
             "logprobs": None,
             "mode": args.mode,
         }
     
     step = 0
+    checkcheck = []
     gold_answers, pred_answers, orig_answers = [], [], []
-    record = []
-    for oe, ce in tqdm(zip(orig_examples, counter_examples), total=len(orig_examples)):
-        if step % 10 == 0:
-            eval(pred_answers, orig_answers, gold_answers)
+    for _id, d in enumerate(tqdm(data[:501])):
         step += 1
-        question, context, answer = ce['question'], ce['context'], ce['answer']
-        orig_answer = oe['answer']
-        if orig_answer is None:
-            continue
+        question = d['question']
+        context = d['cf_context']
+        cf_answer = d['cf_answer']
+        orig_answer = d['orig_answer']
+        
         query = 'Q: {}\nA: '.format(question)
         prompt = qa_to_prompt_baseline(question, context, schema=args.schema)
-        # pred = call_llama(model, tokenizer, prompt, stopping_criteria, stop)
         pred = call_deck(model, query, prompt, stop, params_dict)
-        if pred is None:
-            continue
         pred_answers.append(pred)
-        gold_answers.append(answer)
+        if len(d['cf_alias']) != 0:
+            cf_answer = [cf_answer] + d['cf_alias']
+        if len(d['orig_alias']) != 0:
+            orig_answer = [orig_answer] + d['orig_alias']
+        gold_answers.append(cf_answer)
         orig_answers.append(orig_answer)
-        # Logs
-        ce['prediction'] = pred
-        ce['orig_answer'] = orig_answer
-        ce['schema'] = args.schema
-        ce['demo_mode'] = args.demo_mode
+        d['pred'] = pred
+        
+        # if step % 10 == 0:
+        #     eval(pred_answers, orig_answers, gold_answers)
 
-    if args.log_path:
-        with open(args.log_path, 'w') as fh:
-            json.dump(record, fh, indent=4,)
+    eval(pred_answers, orig_answers, gold_answers)
     print("The parameter configuration is as follows:")
     for arg, value in vars(args).items():
         print(f"{arg}: {value}")
-    eval(pred_answers, orig_answers, gold_answers)
-
     
 
 if __name__ == '__main__':

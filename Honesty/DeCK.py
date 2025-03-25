@@ -71,18 +71,18 @@ class DECK:
             print("Added stop word: ", stop_word, 'with the ids', stop_word_ids, flush=True)
         self.stopping_criteria.append(LLamaQaStoppingCriteria(list_stop_word_ids))
 
-    def generate(self, base_prompt, context_prompt, alpha=0.0, max_new_tokens=32, top_p=1, top_k=1, temperature=1.0, mode='base_no_rag', verbose=False, remove_stop_words=False, relative_top=0.1, **kwargs):
+    def generate(self, base_prompt, context_prompt, alpha=0.0, max_new_tokens=64, top_p=1, top_k=100, temperature=1.0, mode='baseline', verbose=False, remove_stop_words=False, relative_top=0.1, **kwargs):
         with torch.no_grad():
             
-            if mode == 'base_no_rag':
-                assert base_prompt is not None, "base_prompt must be specified"
-                base_ids = self.tokenizer(base_prompt, return_tensors="pt").input_ids.to(self.device)
-                max_len = base_ids.shape[-1] + max_new_tokens
-                outputs = self.model.generate(base_ids, max_length=max_len, num_return_sequences=1,
-                                    output_scores=True, return_dict_in_generate=True, deck_decoding=False,
-                                    top_p=top_p, top_k=top_k, temperature=temperature, stopping_criteria=self.stopping_criteria, **kwargs)
+            # if mode == 'base_no_rag':
+            #     assert base_prompt is not None, "base_prompt must be specified"
+            #     base_ids = self.tokenizer(base_prompt, return_tensors="pt").input_ids.to(self.device)
+            #     max_len = base_ids.shape[-1] + max_new_tokens
+            #     outputs = self.model.generate(base_ids, max_length=max_len, num_return_sequences=1,
+            #                         output_scores=True, return_dict_in_generate=True, deck_decoding=False,
+            #                         top_p=top_p, top_k=top_k, temperature=temperature, stopping_criteria=self.stopping_criteria, **kwargs)
 
-            elif mode == 'baseline':
+            if mode == 'baseline':
                 assert context_prompt is not None, "base_prompt must be specified"
                 context_ids = self.tokenizer(context_prompt, return_tensors="pt").input_ids.to(self.device)
                 max_len = context_ids.shape[-1] + max_new_tokens
