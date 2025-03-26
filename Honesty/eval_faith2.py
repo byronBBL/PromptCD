@@ -10,7 +10,7 @@ import torch
 from transformers import AutoTokenizer, AutoModel, StoppingCriteria, StoppingCriteriaList, AutoModelForCausalLM
 import logging
 os.environ["MKL_THREADING_LAYER"] = "GNU"
-os.environ["CUDA_VISIBLE_DEVICES"] = "3"
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 from DeCK import DECK
 
 class LLamaQaStoppingCriteria(StoppingCriteria):
