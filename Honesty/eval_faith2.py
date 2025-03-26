@@ -163,14 +163,14 @@ def main():
     parser.add_argument("--model_name", default="Models/Qwen2.5-7B-Instruct", type=str)
     parser.add_argument("--data_path", default="work7/faith/ConFiQA-QA.json", type=str)
     parser.add_argument("--engine", default="text-davinci-003", type=str)
-    parser.add_argument("--schema", default="opin", type=str, help="Choose from the following prompting templates: base, attr, instr, opin, instr+opin.")
+    parser.add_argument("--schema", default="base", type=str, help="Choose from the following prompting templates: base, attr, instr, opin, instr+opin.")
     parser.add_argument("--demo_mode", default="none", help="Choose from the following demonstrations: none, original, counter.")
     parser.add_argument("--num_demos", default=16, type=int)
     parser.add_argument("--log_path", default='', type=str)
     parser.add_argument("--num-gpus", type=str, default="1")
     parser.add_argument("--max_gpu_memory", type=int, default=27)
     parser.add_argument("--device", type=str, choices=["cuda", "cpu"], default="cuda")
-    parser.add_argument('--mode', type=str, default='baseline', 
+    parser.add_argument('--mode', type=str, default='deck', 
                     help='deck, baseline')
     args = parser.parse_args()
     
